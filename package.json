@@ -1,0 +1,15 @@
+{
+  "name": "pi-optmem",
+  "version": "0.1.0",
+  "description": "OptMem permanent memory for Pi, bundled — installing this extension is the whole setup",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
