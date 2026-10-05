@@ -21,6 +21,7 @@ pi -e ./pi-optmem
   - `zoom <lo-hi>` / `forget <lo-hi>` — navigate the summary tree / drop a bad summary
   - `wake` / `config` / `import` — re-read the memory / tune sizes / bulk-load dated memories
 - **Auto-wake**: at every session start the extension runs `memo wake` and injects your memory into the system prompt of every run — it survives compaction.
+- **Auto-note**: after each settled exchange, a small nested model call distills the new transcript into at most one memory line (or nothing). Safety net for sessions where the agent never called `memo note`. Disable with `PI_OPTMEM_AUTONOTE=0`; TUI mode only.
 - **Self-init**: on first use the store is created at `~/.optmem/memory` (or `$MEMORY_DIR`).
 - **`/optmem`** command: re-read the memory mid-session.
 

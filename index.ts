@@ -19,7 +19,7 @@
 
 import { existsSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { memoryDir, pretty, runMemo } from "./memo.ts";
 
 const MEMORY_DIR = memoryDir();
@@ -149,8 +149,57 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	pi.registerTool(memoTool);
+	// ---- auto-note: distill each settled exchange into at most one memory ----
+	// A safety net for sessions where the agent never called memo note. Best
+	// effort: one nested model call per settled exchange (TUI only), the model
+	// answers with one memory line or NOTHING. PI_OPTMEM_AUTONOTE=0 disables.
+	let noteMarker: string | null = null; // last session entry already distilled
+	let autoNoteBusy = false;
+
+	function markBranch(ctx: ExtensionContext): void {
+		const branch = ctx.sessionManager.getBranch();
+		noteMarker = branch.length ? branch[branch.length - 1].id : null;
+	}
+
+	function textOf(m: any): string {
+		const c = m?.content;
+		if (typeof c === "string") return c;
+		return Array.isArray(c)
+			? c.filter((b: any) => b?.type === "text").map((b: any) => b.text ?? "").join(" ")
+			: "";
+	}
+
+	/** New transcript tail since the marker, as "role: text" lines. */
+	function collectNew(ctx: ExtensionContext): { id: string | null; text: string; hasUser: boolean } {
+		const branch = ctx.sessionManager.getBranch();
+		const lines: string[] = [];
+		let lastId = noteMarker;
+		let started = noteMarker === null;
+		let hasUser = false;
+		for (const e of branch) {
+			if (!started) {
+				if (e.id === noteMarker) started = true;
+				continue;
+			}
+			lastId = e.id;
+			if (e.type !== "message") continue;
+			const m = (e as any).message;
+			const role = m?.role;
+			if (role !== "user" && role !== "assistant") continue;
+			let t = textOf(m).trim();
+			if (!t) continue;
+			if (role === "user") hasUser = true;
+			if (t.length > 400) t = t.slice(0, 400) + "…";
+			lines.push(`${role}: ${t}`);
+		}
+		let text = lines.join("\n");
+		if (text.length > 6000) text = text.slice(-6000);
+		return { id: lastId, text, hasUser };
+	}
+
 	onMutated = refreshAfter;
+
+	pi.registerTool(memoTool);
 
 	pi.registerCommand("optmem", {
 		description: "Re-read the OptMem memory (memo wake) for the next prompt",
@@ -175,6 +224,58 @@ export default function (pi: ExtensionAPI) {
 			wakeBlock = null;
 			if (ctx.hasUI) ctx.ui.notify(`OptMem disabled: ${(err as Error).message}`, "error");
 		}
+		// Resume: never re-distill history that predates this session.
+		markBranch(ctx);
+	});
+
+	// Auto-note: distill the new transcript tail of each settled exchange into
+	// at most one memory. Safety net for sessions where the agent never ran
+	// `memo note`; the distill model still judges whether anything qualifies.
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (process.env.PI_OPTMEM_AUTONOTE === "0") return;
+		if (ctx.mode !== "tui" || autoNoteBusy || !wakeBlock) return;
+		const { id, text, hasUser } = collectNew(ctx);
+		if (!id || !hasUser || text.length < 80) return;
+		const model = ctx.model;
+		if (!model) return;
+		noteMarker = id; // dispatched; a failed distill loses this tail (best-effort)
+		autoNoteBusy = true;
+		// Fire-and-forget: settlement must not wait on a model round trip.
+		void (async () => {
+			try {
+				const recent = wakeBlock!.split("\n").slice(-12).join("\n");
+				const msg = await ctx.modelRegistry
+					.streamSimple(
+						model,
+						{
+							systemPrompt:
+								"You maintain a permanent one-line-per-memory store for the agent you serve. Extract at most ONE line of lasting value from the conversation: a decision, a fact the user taught, a preference, a completed task worth remembering. Never duplicate what is already known. If nothing qualifies, reply exactly: NOTHING",
+							messages: [
+								{
+									role: "user",
+									content: `Already known (newest lines):\n${recent}\n\nConversation:\n${text}\n\nReply with the one memory line, or NOTHING.`,
+								},
+							],
+						},
+						{ maxTokens: 200, maxRetries: 1 },
+					)
+					.result();
+				if (msg.stopReason === "error" || msg.stopReason === "aborted") return;
+				let line = textOf(msg).trim().split("\n")[0].trim().replace(/^['"]|['". ]+$/g, "");
+				if (!line || /^NOTHING\b/i.test(line)) return;
+				const raw = Buffer.from(line, "utf8");
+				if (raw.length > 270) {
+					// cut on a byte boundary; a sliced multibyte char decodes to U+FFFD
+					line = raw.subarray(0, 270).toString("utf8").replace(/\ufffd+$/g, "").trimEnd();
+				}
+				const res = runMemo(["note", line]);
+				refreshAfter("note", res.code);
+			} catch {
+				/* best-effort: never disturb the session */
+			} finally {
+				autoNoteBusy = false;
+			}
+		})();
 	});
 
 	// Inject the memory into every run's system prompt, so it survives
