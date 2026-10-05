@@ -5,6 +5,10 @@
   "keywords": ["pi-package"],
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krzyzanowskim/pi-optmem.git"
+  },
   "pi": {
     "extensions": ["./index.ts"]
   },

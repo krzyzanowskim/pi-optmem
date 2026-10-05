@@ -1,44 +1,29 @@
 # pi-optmem
 
-[OptMem](https://github.com/VictorTaelin/OptMem) — permanent memory for AI agents — as a Pi extension, **bundled**. Installing this extension is the whole setup: no `curl | sh`, no python3, no PATH edits, no AGENTS.md block to paste. Zero dependencies (Node builtins only).
+[OptMem](https://github.com/VictorTaelin/OptMem) as a Pi extension. OptMem is Victor Taelin's permanent memory for AI agents; this package ships a TypeScript port, so installing the extension is the only setup. No python3, no `curl | sh`. Node builtins only.
 
 ## Install
 
 ```bash
-pi install git:github.com/<you>/pi-optmem
-# or from a local checkout:
-pi install ./pi-optmem
-# or try once:
-pi -e ./pi-optmem
+pi install git:github.com/krzyzanowskim/pi-optmem   # or a local checkout: pi install ./pi-optmem
+pi -e ./pi-optmem                           # try once without installing
 ```
 
-## What you get
+## What it does
 
-- **`memo` tool** — the agent records, searches, and compresses memories without bash:
-  - `note "<one line, ≤280 bytes>"` — record a memory
-  - `nap` / `nap <lo-hi> "<line>"` — do pending compressions
-  - `recall <regex>` — search every memory ever recorded
-  - `zoom <lo-hi>` / `forget <lo-hi>` — navigate the summary tree / drop a bad summary
-  - `wake` / `config` / `import` — re-read the memory / tune sizes / bulk-load dated memories
-- **Auto-wake**: at every session start the extension runs `memo wake` and injects your memory into the system prompt of every run — it survives compaction.
-- **Auto-note**: after each settled exchange, a small nested model call distills the new transcript into at most one memory line (or nothing). Safety net for sessions where the agent never called `memo note`. Disable with `PI_OPTMEM_AUTONOTE=0`; TUI mode only.
-- **Self-init**: on first use the store is created at `~/.optmem/memory` (or `$MEMORY_DIR`).
-- **`/optmem`** command: re-read the memory mid-session.
+At session start it runs `memo wake` and puts your memory into the system prompt of every run, so it survives compaction. It registers a `memo` tool the agent uses instead of bash: `note`, `nap`, `recall`, `zoom`, `forget`, `config`, `import`. After each settled exchange it can distill one more memory line (disable with `PI_OPTMEM_AUTONOTE=0`). `/optmem` re-reads the memory mid-session.
+
+The store is created on first use at `~/.optmem/memory`, or `$MEMORY_DIR` if set. `memo config WAKE_LINES=300` grows the session-start read; 96 lines is about 8k tokens.
 
 ## The port
 
-`memo.ts` is a faithful TypeScript port of upstream OptMem (vendored at commit `f5b6a24a59b4`): same fixed-width records, same `LOG.txt`/`TREE/` layout, same command semantics — one store can be read by both implementations. Divergences, by design:
+`memo.ts` is a TypeScript port of upstream OptMem (commit `f5b6a24a59b4`) with the same fixed-width record format, so both implementations can read one store. Two differences:
 
-- **Locking**: the Python original uses `fcntl.flock` on `.lock`; Node has no flock, so this port uses an atomic-mkdir lock (`.lockdir`) with stale breaking. The two do **not** interlock — never run the Python tool *concurrently* with this one on the same store. Sequential use is safe.
-- `recall` regexes are JS `RegExp` (`iu` flags), not Python `re`.
-- Printed commands say `memo …` instead of the script path.
+- Locking: the Python original uses `fcntl.flock`; Node has no flock, so this port locks with an atomic mkdir. The two locks don't interlock, so don't run the Python tool at the same time as a Pi session on the same store. Sequential use is fine.
+- `recall` takes JavaScript regex.
 
-`memo.ts` also works standalone for debugging: `node memo.ts wake` (Node ≥ 22.6 runs TS directly).
+Standalone: `node memo.ts wake` (Node 22.6+ runs TypeScript directly).
 
-## Notes
+Don't edit anything under the memory directory; `memo` manages it. Parallel Pi sessions share one memory; subagents must not run `memo` (the injected instructions already say so).
 
-- Memory files are managed by `memo` alone; never edit anything under the memory directory.
-- Parallel Pi sessions share the one memory. Subagents must not run `memo` (the injected instructions say so).
-- `memo config WAKE_LINES=300` grows the session-start memory read (~96 lines ≈ 8k tokens by default).
-
-Upstream OptMem by Victor Taelin ships without an explicit license; ported here with attribution.
+Upstream OptMem ships without a license file; ported with attribution.
