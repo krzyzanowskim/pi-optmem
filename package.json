@@ -1,8 +1,8 @@
 {
   "name": "@krzyzanowskim/pi-optmem",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "OptMem permanent memory for Pi, bundled — installing this extension is the whole setup",
-  "keywords": ["pi-package"],
+  "keywords": ["pi-package", "pi-extension", "memory", "agent-memory", "optmem"],
   "license": "SEE LICENSE IN README.md",
   "type": "module",
   "repository": {
