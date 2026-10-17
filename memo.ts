@@ -9,7 +9,8 @@
  *   port uses an atomic mkdir lock (`.lockdir`) with stale breaking. The two
  *   locks do NOT interlock — never run the Python tool concurrently with
  *   this one on the same store. Sequential use is safe.
- * - Regexes in `recall` are JS RegExp (flag "iu"), not Python re.
+ * - Regexes in `recall` are JS RegExp (flag "iu", retried with "i" when
+ *   Unicode mode rejects an escape such as `\-`), not Python re.
  * - Messages name the tool as `memo` instead of the script path.
  * - `init` does not print the AGENTS.md template (the extension injects the
  *   instructions itself).
@@ -696,8 +697,13 @@ function cmdRecall(ctx: Ctx, args: string[]): string {
 	let pat: RegExp;
 	try {
 		pat = new RegExp(args[0], "iu");
-	} catch (e) {
-		die(`bad regex: ${(e as Error).message}`);
+	} catch {
+		// Unicode mode rejects escapes Python accepts, like `\-` and `\ `.
+		try {
+			pat = new RegExp(args[0], "i");
+		} catch (e) {
+			die(`bad regex: ${(e as Error).message}`);
+		}
 	}
 	let hits = 0;
 	let size = 0;
@@ -743,16 +749,19 @@ function cmdZoom(ctx: Ctx, args: string[]): string {
 function validDate(s: string): boolean {
 	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
 	if (!m) return false;
-	const d = new Date(+m[1], +m[2] - 1, +m[3]);
-	return d.getFullYear() === +m[1] && d.getMonth() === +m[2] - 1 && d.getDate() === +m[3];
+	// setFullYear, not the constructor: new Date(50, …) means 1950.
+	const d = new Date(0);
+	d.setFullYear(+m[1], +m[2] - 1, +m[3]);
+	return +m[1] >= 1 && d.getFullYear() === +m[1] && d.getMonth() === +m[2] - 1 && d.getDate() === +m[3];
 }
 
 /** Bulk-append historical memories: 'YYYY-MM-DD <text>' per line. */
 function cmdImport(ctx: Ctx, args: string[]): string {
 	if (args.length !== 1) die(`usage: ${ME} import <file>   # lines of 'YYYY-MM-DD <text>'`);
+	const bytes = readFileSync(args[0]); // a missing file is a filesystem error, reported as such
 	let raw: string;
 	try {
-		raw = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(args[0]));
+		raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 	} catch {
 		die(`${pretty(args[0])} is not UTF-8 text. Convert it, then import again.`);
 	}
@@ -811,6 +820,22 @@ const USAGE = `OptMem (TypeScript port): a permanent, append-only memory for AI 
 
 The memories live in ~/.optmem/memory, or in $MEMORY_DIR if set.`;
 
+/** The existing store, with this memory's sizes applied over the defaults. */
+function context(): Ctx {
+	const d = store();
+	const ctx: Ctx = {
+		d,
+		knobs: {
+			WAKE_LINES: KNOBS.WAKE_LINES[0],
+			ENTRY_CHARS: KNOBS.ENTRY_CHARS[0],
+			PART_CHARS: KNOBS.PART_CHARS[0],
+			PART_LINES: KNOBS.PART_LINES[0],
+		},
+	};
+	Object.assign(ctx.knobs, overrides(d));
+	return ctx;
+}
+
 export interface MemoResult {
 	code: number;
 	output: string;
@@ -823,30 +848,38 @@ export function runMemo(argv: string[]): MemoResult {
 		if (!cmd) return { code: 0, output: USAGE };
 		if (cmd === "init") return { code: 0, output: cmdInit(argv.slice(1)) };
 		if (!Object.hasOwn(COMMANDS, cmd)) return { code: 1, output: `No such command: ${cmd}\n\n${USAGE}` };
-		const d = store();
-		const ctx: Ctx = {
-			d,
-			knobs: {
-				WAKE_LINES: KNOBS.WAKE_LINES[0],
-				ENTRY_CHARS: KNOBS.ENTRY_CHARS[0],
-				PART_CHARS: KNOBS.PART_CHARS[0],
-				PART_LINES: KNOBS.PART_LINES[0],
-			},
-		};
-		Object.assign(ctx.knobs, overrides(d));
-		return { code: 0, output: COMMANDS[cmd](ctx, argv.slice(1)) };
+		return { code: 0, output: COMMANDS[cmd](context(), argv.slice(1)) };
 	} catch (e) {
 		if (e instanceof MemoError) return { code: 1, output: (e as Error).message };
 		const pe = e as NodeJS.ErrnoException;
 		if (pe && typeof pe.code === "string") {
-			const where = pe.path ? pretty(String(pe.path)) : memoryDir();
-			return { code: 1, output: `${where}: ${String(pe.message).split(",")[0]}.` };
+			const where = pretty(pe.path ? String(pe.path) : memoryDir());
+			// "ENOENT: no such file or directory, open '…'" -> "No such file or directory"
+			const why = String(pe.message).split(",")[0].replace(/^[A-Z]+: /, "");
+			return { code: 1, output: `${where}: ${why.charAt(0).toUpperCase()}${why.slice(1)}.` };
 		}
 		throw e;
 	}
 }
 
-// CLI entry: `node memo.ts <command> [args]` (also used by the test suite).
+/** The newest `n` memories and this memory's entry limit: what auto-note
+ * already knows, and how long its line may be. Throws like any command. */
+export function recent(n: number): { lines: string[]; entryChars: number } {
+	const ctx = context();
+	const T = logLen(ctx.d);
+	const lines = logSlice(ctx.d, Math.max(0, T - n), T).map((e) => `#${e[0]} ${e[1]} ${e[2]}`);
+	return { lines, entryChars: ctx.knobs.ENTRY_CHARS };
+}
+
+/** How many memories there are, and how many compressions are pending.
+ * Throws like any command. */
+export function stats(): { memories: number; pending: number } {
+	const ctx = context();
+	const T = logLen(ctx.d);
+	return { memories: T, pending: pendingCount(ctx, T) };
+}
+
+// CLI entry: `node memo.ts <command> [args]`.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const res = runMemo(process.argv.slice(2));
 	console.log(res.output);
