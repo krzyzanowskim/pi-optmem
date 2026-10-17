@@ -1,13 +1,17 @@
 {
-  "name": "pi-optmem",
-  "version": "0.2.0",
+  "name": "@krzyzanowskim/pi-optmem",
+  "version": "0.2.1",
   "description": "OptMem permanent memory for Pi, bundled — installing this extension is the whole setup",
   "keywords": ["pi-package"],
-  "license": "MIT",
+  "license": "SEE LICENSE IN README.md",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/krzyzanowskim/pi-optmem.git"
+  },
+  "files": ["index.ts", "memo.ts"],
+  "publishConfig": {
+    "access": "public"
   },
   "pi": {
     "extensions": ["./index.ts"]

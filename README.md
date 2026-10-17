@@ -5,8 +5,9 @@
 ## Install
 
 ```bash
-pi install git:github.com/krzyzanowskim/pi-optmem   # or a local checkout: pi install ./pi-optmem
-pi -e ./pi-optmem                           # try once without installing
+pi install npm:@krzyzanowskim/pi-optmem
+pi install git:github.com/krzyzanowskim/pi-optmem   # from git; a local checkout: pi install ./pi-optmem
+pi -e npm:@krzyzanowskim/pi-optmem                  # try once without installing
 ```
 
 ## What it does
@@ -44,4 +45,6 @@ Standalone: `node memo.ts wake`. That needs Node 22.18+ or 23.6+ to run TypeScri
 
 Don't edit anything under the memory directory; `memo` manages it. Parallel Pi sessions share one memory; subagents must not run `memo` (the injected instructions already say so).
 
-Upstream OptMem ships without a license file; ported with attribution.
+## License
+
+Upstream OptMem has no license, so none is granted here for `memo.ts`, the port; it is included with attribution to Victor Taelin. The rest of this package (`index.ts`) is MIT.
